@@ -1031,11 +1031,11 @@ async def sim_open_url(
 async def sim_screenshot(
     host: str, user: str, udid: str = "booted",
     key_path: str | None = None,
-) -> Image | str:
+) -> list:
     """Capture a simulator screenshot and return it as an Image (parity with adb_screenshot).
 
     Pipes through base64 over SSH so we don't need a separate scp step.
-    Returns an Image on success, or an error string on failure.
+    Returns [Image, description] on success, or an error string on failure.
     """
     import base64 as _b64
     from pascal_mcp.ios_sim import sim_screenshot_b64
@@ -1046,7 +1046,10 @@ async def sim_screenshot(
         png = _b64.b64decode(result.stdout)
     except Exception as e:
         return f"sim_screenshot succeeded but base64 decode failed: {e}"
-    return Image(data=png, format="png")
+    return [
+        Image(data=png, format="png"),
+        f"Simulator screenshot ({len(png)} bytes PNG)",
+    ]
 
 
 @mcp.tool()

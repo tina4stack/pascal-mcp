@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import glob
 import os
-import re
 import socket
 import subprocess
 import sys
@@ -102,39 +101,26 @@ def _run_paclient(
     )
 
 
-# Lines look like:
-#     Profile: MACBOOK.profile
-#    Location: C:\Users\andre\AppData\Roaming\Embarcadero\BDS\37.0\
-#    Platform: OSX64
-#        Host: 192.168.88.79
-#        Port: 64211
-#    Password: AB1401D23AF8F3C66832CE6040E1FA2D
-#     Sysroot: C:\Users\andre\OneDrive\Documents\Embarcadero\Studio\SDKs\MACBOOK
-_PACLIENT_LINE_RE = re.compile(r"^\s*([A-Za-z]+):\s+(.*?)\s*$")
-
-
-def _profile_exists_in_registry(profile: str, version: str | None) -> bool:
-    """Check the HKCU registry for whether this profile is genuinely registered.
-
-    Necessary because `paclient -l <anything>` happily synthesises a default
-    profile entry rather than erroring on a typo — so we can't rely on
-    paclient's exit code to validate the name. We re-use the registry sniffer
-    already implemented in compiler.py for list_remote_profiles.
-    """
-    # Lazy import to avoid a circular dep at module load: compiler.py may
-    # eventually want to import paclient too.
+def _resolve_studio_version(version: str | None) -> str | None:
+    """Resolve a Studio version key (e.g. '37.0'), defaulting to the newest."""
+    if version is not None:
+        return version
     from pascal_mcp.compiler import (
-        _discover_remote_profiles,
         _discover_studio_roots,
         _studio_version_from_root,
     )
+    roots = _discover_studio_roots()
+    if not roots:
+        return None
+    return _studio_version_from_root(roots[0])
+
+
+def _profile_exists_in_registry(profile: str, version: str | None) -> bool:
+    """Check the HKCU registry for whether this profile is genuinely registered."""
+    from pascal_mcp.compiler import _discover_remote_profiles
+    version = _resolve_studio_version(version)
     if version is None:
-        roots = _discover_studio_roots()
-        if not roots:
-            return False
-        version = _studio_version_from_root(roots[0])
-        if version is None:
-            return False
+        return False
     profiles = _discover_remote_profiles(version)
     return any(p.name == profile for p in profiles)
 
@@ -145,52 +131,70 @@ def get_paserver_info(
     timeout: int = 30,
     studio_version: str | None = None,
 ) -> PAServerInfo | None:
-    """Read the local profile info via `paclient -l`.
+    """Read PAServer Connection Profile info straight from the HKCU registry.
 
-    Pure local read — does NOT touch the network. We validate the profile
-    name against the registry first because paclient itself doesn't error
-    on unknown names (it just emits a synthesised "localhost" default).
+    The registry is the source of truth — host, port, platform, and the
+    encrypted password all live under
+    HKCU\\Software\\Embarcadero\\BDS\\<ver>\\RemoteProfiles\\<name>.
 
-    Returns None if the profile isn't registered, or if paclient produces
-    no parseable output at all.
+    We deliberately do NOT parse `paclient -l` output anymore. It's fragile
+    in two ways we hit in practice:
+      * When the IDE (bds.exe) is running, paclient refuses to emit the
+        profile ("W0013 Cannot save profile while bds.exe process is
+        running") and prints nothing parseable.
+      * Different paclient point-releases reformat the output.
+
+    The registry has none of those problems and is always readable. The
+    `paclient` argument is retained for signature compatibility but unused.
+
+    Returns None if the profile isn't registered. Sysroot isn't stored in
+    the registry (paclient computes it at connection time) so it's left
+    blank — it isn't needed for connection checks or file transfer.
     """
-    if not _profile_exists_in_registry(profile, studio_version):
+    from pascal_mcp.compiler import _discover_remote_profiles
+
+    version = _resolve_studio_version(studio_version)
+    if version is None:
         return None
 
-    try:
-        proc = _run_paclient(paclient, ["-l", profile], timeout=timeout)
-    except subprocess.TimeoutExpired:
+    profiles = _discover_remote_profiles(version)
+    match = next((p for p in profiles if p.name == profile), None)
+    if match is None:
         return None
 
-    if proc.returncode != 0 and not proc.stdout:
-        return None
+    # _discover_remote_profiles gives us name/platform/host/port. Pull the
+    # encrypted password directly — needed for -pk on file transfer / iOS ops.
+    password = _read_profile_password(profile, version)
 
-    fields: dict[str, str] = {}
-    for line in (proc.stdout or "").splitlines():
-        m = _PACLIENT_LINE_RE.match(line)
-        if not m:
-            continue
-        key, val = m.group(1), m.group(2)
-        if key in ("Profile", "Location", "Platform", "Host", "Port", "Password", "Sysroot"):
-            fields[key] = val
-
-    if "Host" not in fields:
-        return None
-
-    try:
-        port = int(fields.get("Port") or 0)
-    except ValueError:
-        port = 0
+    appdata = os.environ.get("APPDATA", "")
+    location = os.path.join(appdata, "Embarcadero", "BDS", version) + os.sep
 
     return PAServerInfo(
-        profile=fields.get("Profile", profile),
-        location=fields.get("Location", ""),
-        platform=fields.get("Platform", ""),
-        host=fields.get("Host", ""),
-        port=port,
-        password=fields.get("Password", ""),
-        sysroot=fields.get("Sysroot", ""),
+        profile=f"{profile}.profile",
+        location=location,
+        platform=match.platform,
+        host=match.hostname,
+        port=match.port,
+        password=password,
+        sysroot="",  # not in registry; paclient computes it at connect time
     )
+
+
+def _read_profile_password(profile: str, version: str) -> str:
+    """Read the encrypted Password value for a profile from HKCU registry."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    key_path = rf"SOFTWARE\Embarcadero\BDS\{version}\RemoteProfiles\{profile}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+            val, _ = winreg.QueryValueEx(k, "Password")
+            return str(val or "")
+    except (FileNotFoundError, OSError):
+        return ""
 
 
 def tcp_reachable(host: str, port: int, timeout: float = 3.0) -> tuple[bool, str]:
