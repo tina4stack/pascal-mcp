@@ -23,9 +23,41 @@ the Mac user separately because PAServer profiles don't store it.
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
+
+
+def find_ssh() -> str:
+    """Locate a native ssh client, preferring Windows OpenSSH.
+
+    We do NOT rely on bare `ssh` + PATH resolution. The MCP server inherits
+    whatever environment Claude Desktop was launched with, and in practice
+    that PATH can resolve `ssh` to an MSYS2 / Git-bundled binary that hangs
+    when invoked from a native Windows process without a pty (it times out
+    instead of authenticating). Pinning the native Windows OpenSSH binary
+    makes ssh behave identically regardless of who spawned us.
+
+    Order on Windows:
+      1. %SystemRoot%\\System32\\OpenSSH\\ssh.exe  (the built-in client)
+      2. C:\\Program Files\\OpenSSH-Win64\\ssh.exe  (standalone install)
+      3. bare "ssh" as a last resort.
+    On non-Windows, just use "ssh".
+    """
+    if sys.platform == "win32":
+        candidates = [
+            os.path.join(
+                os.environ.get("SystemRoot", r"C:\Windows"),
+                "System32", "OpenSSH", "ssh.exe",
+            ),
+            r"C:\Program Files\OpenSSH-Win64\ssh.exe",
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+    return "ssh"
 
 
 @dataclass
@@ -61,7 +93,7 @@ def ssh_run(
     command: str,
     key_path: str | None = None,
     timeout: int = 60,
-    connect_timeout: int = 5,
+    connect_timeout: int = 10,
     accept_new_host_keys: bool = True,
 ) -> SSHResult:
     """Run a single command on the remote Mac via SSH.
@@ -69,6 +101,9 @@ def ssh_run(
     Always uses BatchMode (no interactive password prompts) — if the user
     hasn't installed a public key yet, this fails fast with a clear
     "Permission denied (publickey,...)" error rather than hanging.
+
+    Uses a pinned native ssh binary (see find_ssh) instead of bare "ssh"
+    so behaviour doesn't depend on whatever PATH the MCP server inherited.
 
     Args:
         host: Mac hostname or IP (typically the same address as the
@@ -81,7 +116,8 @@ def ssh_run(
             to whatever the user's ~/.ssh/config + agent provide.
         timeout: Total seconds before the remote command is killed.
         connect_timeout: Seconds before giving up on the initial TCP /
-            SSH handshake — small so we fail fast on a dead host.
+            SSH handshake. Default 10 — a sleeping Mac can take several
+            seconds to wake and accept the first connection.
         accept_new_host_keys: Auto-accept new server keys (StrictHostKey
             Checking=accept-new) the first time we see the Mac. Subsequent
             connections still verify the key.
@@ -89,7 +125,7 @@ def ssh_run(
     Returns SSHResult with the full stdout/stderr/exit_code for the
     caller to format and surface.
     """
-    args = ["ssh"]
+    args = [find_ssh()]
     if accept_new_host_keys:
         args += ["-o", "StrictHostKeyChecking=accept-new"]
     args += [
@@ -109,7 +145,17 @@ def ssh_run(
         return SSHResult(
             success=False, exit_code=-1,
             stdout="",
-            stderr=f"ssh command timed out after {timeout}s",
+            stderr=(
+                f"ssh command timed out after {timeout}s "
+                f"(ssh binary: {find_ssh()})"
+            ),
+            host=host, user=user, command=command,
+        )
+    except FileNotFoundError as e:
+        return SSHResult(
+            success=False, exit_code=-1,
+            stdout="",
+            stderr=f"ssh binary not found: {e}",
             host=host, user=user, command=command,
         )
 
@@ -123,13 +169,16 @@ def ssh_run(
 
 
 def ssh_check(
-    host: str, user: str, key_path: str | None = None, timeout: int = 5,
+    host: str, user: str, key_path: str | None = None, timeout: int = 15,
 ) -> tuple[bool, str]:
     """Quick "is SSH reachable + authenticated" probe.
 
     Runs `whoami` so we can confirm both connectivity AND that we landed
     on the expected account. Returns (ok, message) where message is
     human-readable diagnostic text.
+
+    Default timeout is 15s: a sleeping Mac needs a few seconds to wake on
+    the first connection, and 5s was too tight in practice.
     """
     result = ssh_run(
         host, user, "whoami",
