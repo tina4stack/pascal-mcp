@@ -174,6 +174,11 @@ def ssh_run(
     known_hosts = _known_hosts_path()
     if known_hosts:
         args += ["-o", f"UserKnownHostsFile={known_hosts}"]
+    # Diagnostic: PASCAL_MCP_SSH_DEBUG=1 injects -vvv so a hang's location
+    # (DNS, connect, kex, auth) is visible in the captured stderr.
+    debug = os.environ.get("PASCAL_MCP_SSH_DEBUG") == "1"
+    if debug:
+        args += ["-vvv"]
     if key_path:
         args += ["-i", key_path]
     args += [f"{user}@{host}", command]
@@ -182,14 +187,34 @@ def ssh_run(
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=timeout,
             encoding="utf-8", errors="replace",
+            # CRITICAL on Windows: give ssh a closed stdin. The MCP server is
+            # a console-less process; without this, ssh.exe inherits an
+            # invalid stdin handle and blocks trying to interact with a
+            # terminal that isn't there — it hangs for the full timeout even
+            # with BatchMode=yes. (paclient.exe doesn't read stdin, which is
+            # why paserver_* worked through the MCP but mac_ssh_*/sim_* hung.)
+            # With DEVNULL, ssh sees EOF immediately and proceeds with key
+            # auth only. This is THE fix for "ssh times out through the MCP
+            # but works from a shell."
+            stdin=subprocess.DEVNULL,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
+        partial = ""
+        if debug:
+            so = (e.stdout or b"")
+            se = (e.stderr or b"")
+            if isinstance(so, bytes):
+                so = so.decode("utf-8", "replace")
+            if isinstance(se, bytes):
+                se = se.decode("utf-8", "replace")
+            partial = "\n--- partial ssh -vvv output ---\n" + (so + se)[-2000:]
         return SSHResult(
             success=False, exit_code=-1,
             stdout="",
             stderr=(
                 f"ssh command timed out after {timeout}s "
-                f"(ssh binary: {find_ssh()})"
+                f"(ssh binary: {find_ssh()}; argv: {' '.join(args[:12])} ...)"
+                + partial
             ),
             host=host, user=user, command=command,
         )
