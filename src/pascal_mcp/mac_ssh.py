@@ -60,6 +60,28 @@ def find_ssh() -> str:
     return "ssh"
 
 
+def _known_hosts_path() -> str | None:
+    """Resolve the user's known_hosts path explicitly.
+
+    ssh normally finds this via HOME / USERPROFILE, but under the MCP
+    server's inherited environment that resolution can be unreliable. We
+    resolve it here in Python (expanduser reads USERPROFILE on Windows,
+    which is reliably present) and create ~/.ssh if missing so ssh can
+    write new host keys with StrictHostKeyChecking=accept-new.
+
+    Returns None if we can't determine or create the directory — in which
+    case ssh falls back to its own default resolution.
+    """
+    try:
+        ssh_dir = os.path.expanduser(os.path.join("~", ".ssh"))
+        if "~" in ssh_dir:  # expanduser failed to resolve
+            return None
+        os.makedirs(ssh_dir, exist_ok=True)
+        return os.path.join(ssh_dir, "known_hosts")
+    except OSError:
+        return None
+
+
 @dataclass
 class SSHResult:
     """Outcome of a remote command execution."""
@@ -131,7 +153,27 @@ def ssh_run(
     args += [
         "-o", "BatchMode=yes",
         "-o", f"ConnectTimeout={connect_timeout}",
+        # Robustness options for running under a restricted/odd environment
+        # (the MCP server inherits Claude Desktop's process env, which has
+        # bitten us with spawned ssh hanging for the full timeout even though
+        # the parent can TCP-connect fine). Each of these removes a common
+        # stall source:
+        #   GSSAPIAuthentication=no  — don't probe Kerberos/AD, which can hang
+        #     for many seconds when no domain controller is reachable.
+        #   PreferredAuthentications=publickey + Password/KbdInteractive=no —
+        #     go straight to key auth, never sit waiting on an interactive
+        #     method that BatchMode would ultimately reject anyway.
+        "-o", "GSSAPIAuthentication=no",
+        "-o", "PreferredAuthentications=publickey",
+        "-o", "PasswordAuthentication=no",
+        "-o", "KbdInteractiveAuthentication=no",
     ]
+    # Pin the known_hosts file to an explicit path resolved here in Python
+    # (via USERPROFILE, which os.path.expanduser reads reliably) so ssh
+    # doesn't depend on HOME resolution inside whatever env spawned us.
+    known_hosts = _known_hosts_path()
+    if known_hosts:
+        args += ["-o", f"UserKnownHostsFile={known_hosts}"]
     if key_path:
         args += ["-i", key_path]
     args += [f"{user}@{host}", command]
