@@ -292,6 +292,42 @@ def _paclient_conn_args(info: PAServerInfo) -> list[str]:
     ]
 
 
+def _relativize_scratch_path(remote_path: str) -> str:
+    """Make a remote path relative to PAServer's restricted scratch root.
+
+    PAClient 37.1 changed (vs 37.0) how it interprets the remote side of
+    --put/--get/--Remove under restricted mode: the path is now treated as
+    RELATIVE to the per-profile scratch root, not absolute. Passing the
+    absolute scratch path (what paserver_scratch_dir returns, and the
+    natural thing to hand it) double-nests the whole tree, e.g.:
+
+        scratch-dir/andre-MACBOOK/Users/.../scratch-dir/andre-MACBOOK/file
+
+    and the file silently lands in the wrong place (paclient even reports
+    "0 file(s) copied" while actually writing it).
+
+    This helper accepts either form and returns a path relative to the
+    scratch root:
+      * If the path contains ".../PAServer/scratch-dir/<something>/REST",
+        return REST (the part after the per-profile dir).
+      * If it IS exactly the scratch root (no REST), return "." (the root).
+      * Otherwise (already relative, or a non-scratch path), return as-is.
+
+    So both paserver_put(..., remote_dir=scratch_dir) and
+    paserver_put(..., remote_dir="subdir") work correctly.
+    """
+    p = remote_path.replace("\\", "/")
+    marker = "PAServer/scratch-dir/"
+    idx = p.find(marker)
+    if idx < 0:
+        return remote_path  # already relative or not a scratch path
+    after = p[idx + len(marker):]          # "<windows>-<PROFILE>/REST..."
+    parts = after.split("/", 1)
+    rest = parts[1] if len(parts) > 1 else ""
+    rest = rest.strip("/")
+    return rest if rest else "."
+
+
 def paserver_scratch_dir(
     profile: str,
     remote_user: str,
@@ -345,9 +381,10 @@ def paserver_get(
                               f"Profile {profile!r} not found")
 
     os.makedirs(local_dir, exist_ok=True)
+    rel = _relativize_scratch_path(remote_path)
     args = [
         *_paclient_conn_args(info),
-        f"--get={remote_path},{local_dir}",
+        f"--get={rel},{local_dir}",
         profile,
     ]
     try:
@@ -385,6 +422,17 @@ def paserver_put(
     the path) or have the user start PAServer with -restricted=false on
     the Mac side. The scratch dir is the right answer for build staging
     and ad-hoc file transfer — it's what the IDE uses.
+
+    remote_dir is interpreted RELATIVE to the scratch root (PAClient 37.1
+    behaviour). You may pass either the absolute scratch path returned by
+    paserver_scratch_dir (it gets relativized for you) or a relative
+    subdir like "assets". An absolute scratch path passed verbatim to
+    paclient 37.1 would otherwise double-nest the whole tree — see
+    _relativize_scratch_path.
+
+    Note: paclient 37.1's "Total file(s) copied" counter is unreliable
+    (often reports 0 even on success), so success is taken from the exit
+    code, not the counter.
     """
     info = get_paserver_info(paclient, profile)
     if info is None:
@@ -395,9 +443,10 @@ def paserver_put(
         return TransferResult(False, profile, "put", "",
                               f"local_path does not exist: {local_path}")
 
+    rel = _relativize_scratch_path(remote_dir)
     args = [
         *_paclient_conn_args(info),
-        f"--put={local_path},{remote_dir}",
+        f"--put={local_path},{rel}",
         profile,
     ]
     try:
@@ -632,7 +681,7 @@ def paserver_remove(
 
     args = [
         *_paclient_conn_args(info),
-        f"--Remove={remote_path}",
+        f"--Remove={_relativize_scratch_path(remote_path)}",
         profile,
     ]
     try:

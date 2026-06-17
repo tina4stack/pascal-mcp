@@ -1,6 +1,6 @@
 [project]
 name = "claude-pascal-mcp"
-version = "0.13.4"
+version = "0.13.5"
 description = "MCP server for Pascal/Delphi/Lazarus compilation and execution with Claude"
 readme = "README.md"
 requires-python = ">=3.11"
