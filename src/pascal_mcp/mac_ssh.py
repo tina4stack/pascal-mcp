@@ -109,6 +109,44 @@ class SSHResult:
         return "\n".join(lines)
 
 
+def _ssh_base_args(
+    connect_timeout: int = 10,
+    key_path: str | None = None,
+    accept_new_host_keys: bool = True,
+) -> list[str]:
+    """Build the ssh argv prefix shared by ssh_run and ssh_pull.
+
+    Encodes all the hard-won robustness flags in one place: pinned native
+    binary, the auth-method narrowing that avoids GSSAPI/interactive
+    stalls, and an explicit known_hosts path so ssh doesn't depend on the
+    MCP server's inherited HOME. The caller appends `user@host` and the
+    remote command, and MUST pass stdin=subprocess.DEVNULL (see ssh_run
+    for why — console-less parent otherwise hangs ssh).
+    """
+    args = [find_ssh()]
+    if accept_new_host_keys:
+        args += ["-o", "StrictHostKeyChecking=accept-new"]
+    args += [
+        "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout={connect_timeout}",
+        # See ssh_run's original notes: these remove common stall sources
+        # (Kerberos/AD probing, interactive auth waits) under the
+        # restricted/odd environment the MCP server inherits.
+        "-o", "GSSAPIAuthentication=no",
+        "-o", "PreferredAuthentications=publickey",
+        "-o", "PasswordAuthentication=no",
+        "-o", "KbdInteractiveAuthentication=no",
+    ]
+    known_hosts = _known_hosts_path()
+    if known_hosts:
+        args += ["-o", f"UserKnownHostsFile={known_hosts}"]
+    if os.environ.get("PASCAL_MCP_SSH_DEBUG") == "1":
+        args += ["-vvv"]
+    if key_path:
+        args += ["-i", key_path]
+    return args
+
+
 def ssh_run(
     host: str,
     user: str,
@@ -147,40 +185,12 @@ def ssh_run(
     Returns SSHResult with the full stdout/stderr/exit_code for the
     caller to format and surface.
     """
-    args = [find_ssh()]
-    if accept_new_host_keys:
-        args += ["-o", "StrictHostKeyChecking=accept-new"]
-    args += [
-        "-o", "BatchMode=yes",
-        "-o", f"ConnectTimeout={connect_timeout}",
-        # Robustness options for running under a restricted/odd environment
-        # (the MCP server inherits Claude Desktop's process env, which has
-        # bitten us with spawned ssh hanging for the full timeout even though
-        # the parent can TCP-connect fine). Each of these removes a common
-        # stall source:
-        #   GSSAPIAuthentication=no  — don't probe Kerberos/AD, which can hang
-        #     for many seconds when no domain controller is reachable.
-        #   PreferredAuthentications=publickey + Password/KbdInteractive=no —
-        #     go straight to key auth, never sit waiting on an interactive
-        #     method that BatchMode would ultimately reject anyway.
-        "-o", "GSSAPIAuthentication=no",
-        "-o", "PreferredAuthentications=publickey",
-        "-o", "PasswordAuthentication=no",
-        "-o", "KbdInteractiveAuthentication=no",
-    ]
-    # Pin the known_hosts file to an explicit path resolved here in Python
-    # (via USERPROFILE, which os.path.expanduser reads reliably) so ssh
-    # doesn't depend on HOME resolution inside whatever env spawned us.
-    known_hosts = _known_hosts_path()
-    if known_hosts:
-        args += ["-o", f"UserKnownHostsFile={known_hosts}"]
-    # Diagnostic: PASCAL_MCP_SSH_DEBUG=1 injects -vvv so a hang's location
-    # (DNS, connect, kex, auth) is visible in the captured stderr.
+    args = _ssh_base_args(
+        connect_timeout=connect_timeout,
+        key_path=key_path,
+        accept_new_host_keys=accept_new_host_keys,
+    )
     debug = os.environ.get("PASCAL_MCP_SSH_DEBUG") == "1"
-    if debug:
-        args += ["-vvv"]
-    if key_path:
-        args += ["-i", key_path]
     args += [f"{user}@{host}", command]
 
     try:
@@ -277,3 +287,130 @@ def ssh_check(
 def shell_quote(s: str) -> str:
     """Safely quote a string for inclusion in a remote shell command."""
     return shlex.quote(s)
+
+
+@dataclass
+class PullResult:
+    """Outcome of an SSH-based file/dir pull."""
+    success: bool
+    host: str
+    user: str
+    remote_path: str
+    local_dir: str
+    members: list[str]   # top-level names extracted into local_dir
+    error: str
+
+
+def _posix_dirname_basename(path: str) -> tuple[str, str]:
+    """Split a POSIX remote path into (parent, basename) without os.path.
+
+    os.path on Windows would split on backslashes and mangle a Mac path,
+    so we do it manually for forward slashes.
+    """
+    p = path.rstrip("/")
+    if "/" not in p:
+        return ".", p
+    parent, _, base = p.rpartition("/")
+    return (parent or "/"), base
+
+
+def ssh_pull(
+    host: str,
+    user: str,
+    remote_path: str,
+    local_dir: str,
+    key_path: str | None = None,
+    timeout: int = 600,
+    connect_timeout: int = 10,
+) -> PullResult:
+    r"""Pull a remote file OR directory to local_dir over SSH using tar.
+
+    This is the reliable replacement for `paclient --get`, which is broken
+    on Windows under PAClient 37.1 (issue #12: it mangles the local destdir
+    with a trailing backslash + \\?\ long-path and writes nothing). Since
+    SSH-to-Mac works, we stream `tar -C <parent> -cf - <basename>` over the
+    ssh channel and extract it locally with Python's tarfile.
+
+    Handles both single files and directory bundles (.app, .dSYM) in one
+    shot, preserves the directory structure, and is binary-clean because
+    we capture stdout as bytes (no text decoding, no base64 needed for
+    correctness — tar framing is exact).
+
+    Args:
+        host: Mac hostname or IP.
+        user: Mac user account (SSH login — NOT stored in PAServer
+            profiles, so the caller supplies it).
+        remote_path: Absolute path on the Mac to the file or directory.
+        local_dir: Local directory to extract into (created if missing).
+        key_path: Optional explicit SSH private key.
+        timeout: Total seconds for the transfer (default 600 — .app
+            bundles can be large).
+        connect_timeout: SSH handshake timeout.
+
+    Returns PullResult with the list of top-level members extracted.
+    """
+    import io
+    import tarfile
+
+    parent, base = _posix_dirname_basename(remote_path)
+    # -h dereferences symlinks so the local copy is self-contained; the .app
+    # bundles PAServer assembles contain symlinks into the framework that
+    # wouldn't resolve on Windows otherwise.
+    remote_cmd = (
+        f"tar -C {shell_quote(parent)} -ch -f - {shell_quote(base)}"
+    )
+    args = _ssh_base_args(
+        connect_timeout=connect_timeout, key_path=key_path,
+    )
+    args += [f"{user}@{host}", remote_cmd]
+
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, timeout=timeout,
+            stdin=subprocess.DEVNULL,  # see ssh_run — console-less parent
+        )
+    except subprocess.TimeoutExpired:
+        return PullResult(
+            False, host, user, remote_path, local_dir, [],
+            f"ssh tar pull timed out after {timeout}s",
+        )
+    except FileNotFoundError as e:
+        return PullResult(
+            False, host, user, remote_path, local_dir, [],
+            f"ssh binary not found: {e}",
+        )
+
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        # A common, actionable case: the remote path doesn't exist.
+        if "No such file" in err:
+            err = f"remote path not found on the Mac: {remote_path}\n{err}"
+        elif "Permission denied" in err:
+            err = (
+                f"SSH key auth failed for {user}@{host}. Run "
+                f"ssh-copy-id {user}@{host} once.\n{err}"
+            )
+        return PullResult(
+            False, host, user, remote_path, local_dir, [],
+            err or f"ssh exited {proc.returncode}",
+        )
+
+    os.makedirs(local_dir, exist_ok=True)
+    members: list[str] = []
+    try:
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tf:
+            # Track top-level names for the result summary.
+            for m in tf.getmembers():
+                top = m.name.split("/", 1)[0]
+                if top and top not in members:
+                    members.append(top)
+            tf.extractall(local_dir)
+    except (tarfile.TarError, OSError) as e:
+        return PullResult(
+            False, host, user, remote_path, local_dir, [],
+            f"received {len(proc.stdout)} bytes but tar extract failed: {e}",
+        )
+
+    return PullResult(
+        True, host, user, remote_path, local_dir, members, "",
+    )

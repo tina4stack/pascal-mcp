@@ -823,39 +823,55 @@ async def paserver_get(
     profile: str,
     remote_path: str,
     local_dir: str,
+    ssh_user: str | None = None,
+    ssh_key_path: str | None = None,
     timeout: int = 300,
     studio_root: str | None = None,
 ) -> str:
     """Pull a file or directory from the PAServer remote host to this box.
 
-    Wraps `paclient -g <remote>,<local_dir>`. The remote_path can use
-    PAClient's wildcard syntax (e.g. ``Documents/logs/*.txt``). Useful for
-    pulling crash logs, build artifacts the IDE assembled on the remote
-    (codesigned .app bundles, .ipa files), or any other file you need
-    without setting up a separate SSH layer.
+    PREFER passing ssh_user: that routes the transfer over SSH (tar stream),
+    which is the reliable path. PAClient 37.1's own `--get` is broken on
+    Windows (it mangles the local destination and silently writes nothing —
+    issue #12), and the SSH path also pulls directory bundles (.app / .dSYM)
+    intact, which is what you actually want back after an iOS/macOS build.
+
+    Without ssh_user it falls back to `paclient --get`, kept only for hosts
+    where SSH isn't set up — expect it to fail on paclient 37.1.
 
     Args:
-        profile: Connection Profile name.
-        remote_path: Path on the PAServer host. May contain wildcards.
-        local_dir: Local directory to drop the files into. Created if
-            missing.
-        timeout: Seconds before the transfer is killed (default 300).
+        profile: Connection Profile name (resolves the Mac host).
+        remote_path: Path on the Mac — either absolute, or relative to the
+            PAServer scratch root (e.g. "CuttlefishV2.app" or
+            "logs/crash.txt"). Relative paths are resolved against the
+            scratch dir for the SSH transport.
+        local_dir: Local directory to extract into. Created if missing.
+        ssh_user: Mac SSH login (e.g. "andrevanzuydam"). Enables the
+            reliable SSH transport. Not stored in PAServer profiles, so
+            you supply it. Requires one-time `ssh-copy-id <user>@<host>`.
+        ssh_key_path: Optional explicit SSH private key path.
+        timeout: Seconds before the transfer is killed (default 300;
+            bump for large .app bundles).
         studio_root: Optional Studio install root.
     """
     from pascal_mcp.paclient import find_paclient, paserver_get as do_get
     pc = find_paclient(studio_root)
     if pc is None:
         return "paclient.exe not found."
-    r = do_get(pc, profile, remote_path, local_dir, timeout=timeout)
+    r = do_get(
+        pc, profile, remote_path, local_dir, timeout=timeout,
+        ssh_user=ssh_user, ssh_key_path=ssh_key_path,
+    )
     head = (
         f"profile: {r.profile}\noperation: {r.operation}\n"
+        f"transport: {'ssh' if ssh_user else 'paclient'}\n"
         f"success: {r.success}\n\n"
     )
     body = ""
     if r.output:
-        body += "--- paclient output ---\n" + r.output.strip() + "\n"
+        body += "--- output ---\n" + r.output.strip() + "\n"
     if r.errors:
-        body += "--- paclient stderr ---\n" + r.errors.strip() + "\n"
+        body += "--- errors ---\n" + r.errors.strip() + "\n"
     return head + body
 
 

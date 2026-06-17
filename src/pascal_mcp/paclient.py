@@ -368,18 +368,71 @@ def paserver_get(
     remote_path: str,
     local_dir: str,
     timeout: int = 300,
+    ssh_user: str | None = None,
+    ssh_key_path: str | None = None,
+    remote_user: str | None = None,
 ) -> TransferResult:
     """Pull a file/dir from the remote PAServer host into local_dir.
 
-    Wraps `paclient -g <remote>,<local_dir>`. The remote_path can use
-    PAClient's wildcard syntax (e.g. ``logs/*.txt``). The local_dir is
-    where the file lands on this Windows box.
+    Two transport paths:
+
+    * SSH (preferred when ssh_user is given) — streams `tar` over the SSH
+      channel and extracts locally. This is the reliable path: PAClient
+      37.1's `--get` is broken on Windows (issue #12 — it mangles the
+      local destdir and writes nothing). SSH also handles directory
+      bundles (.app/.dSYM) cleanly, which is what you actually pull back
+      after an iOS/macOS build.
+
+    * paclient --get (fallback when no ssh_user) — kept for environments
+      where SSH isn't set up, but be aware it may silently fail on
+      paclient 37.1.
+
+    remote_path may be the absolute Mac path, or a path relative to the
+    scratch root. For the SSH path we need an absolute Mac path, so a
+    relative path is resolved against the scratch dir (which needs the
+    remote_user — defaults to ssh_user, since that's almost always the
+    same account running paserver).
+
+    Args:
+        ssh_user: Mac SSH login. When provided, the SSH transport is used.
+        ssh_key_path: Optional explicit SSH private key.
+        remote_user: Unix account that owns the PAServer scratch dir, used
+            only to resolve a relative remote_path to an absolute one.
+            Defaults to ssh_user.
     """
     info = get_paserver_info(paclient, profile)
     if info is None:
         return TransferResult(False, profile, "get", "",
                               f"Profile {profile!r} not found")
 
+    if ssh_user:
+        from pascal_mcp.mac_ssh import ssh_pull
+
+        # Resolve a scratch-relative path to an absolute Mac path.
+        abs_remote = remote_path
+        if not remote_path.startswith("/"):
+            scratch_owner = remote_user or ssh_user
+            scratch = paserver_scratch_dir(profile, scratch_owner)
+            rel = remote_path.lstrip("./") if remote_path not in (".", "") else ""
+            abs_remote = f"{scratch}/{rel}".rstrip("/")
+
+        result = ssh_pull(
+            info.host, ssh_user, abs_remote, local_dir,
+            key_path=ssh_key_path, timeout=timeout,
+        )
+        out = (
+            f"Pulled via SSH (tar): {abs_remote}\n"
+            f"Extracted into: {local_dir}\n"
+            f"Members: {', '.join(result.members) or '(none)'}"
+        )
+        return TransferResult(
+            success=result.success,
+            profile=profile, operation="get",
+            output=out if result.success else "",
+            errors="" if result.success else result.error,
+        )
+
+    # Legacy paclient path (may fail on 37.1; see issue #12).
     os.makedirs(local_dir, exist_ok=True)
     rel = _relativize_scratch_path(remote_path)
     args = [
@@ -395,7 +448,10 @@ def paserver_get(
     return TransferResult(
         success=proc.returncode == 0,
         profile=profile, operation="get",
-        output=proc.stdout or "", errors=proc.stderr or "",
+        output=(proc.stdout or "")
+        + "\n(NOTE: paclient --get is unreliable on 37.1; pass ssh_user "
+        "for the reliable SSH transport — issue #12)",
+        errors=proc.stderr or "",
     )
 
 
