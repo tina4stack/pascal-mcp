@@ -2,7 +2,7 @@
 
 A self-contained guide for uploading to Claude Teams / project knowledge. Everything a teammate needs to set up and use the Claude Pascal MCP server lives in this file.
 
-Repo: `git@github.com:tina4stack/claude-pascal-mcp.git`
+Repo: `git@github.com:tina4stack/pascal-mcp.git`
 License: MIT
 
 ---
@@ -51,6 +51,8 @@ Three ways to install — pick the one that fits.
 
 No clone, no `uv sync` — `uvx` fetches and runs in one shot:
 
+The PyPI distribution keeps its original `claude-pascal-mcp` name for compatibility. The server and repository use `pascal-mcp`.
+
 ```bash
 uvx --from claude-pascal-mcp pascal-mcp
 ```
@@ -60,7 +62,7 @@ uvx --from claude-pascal-mcp pascal-mcp
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uvx",
       "args": ["--from", "claude-pascal-mcp", "pascal-mcp"]
     }
@@ -73,7 +75,7 @@ uvx --from claude-pascal-mcp pascal-mcp
 Run it straight from the repo. Pin a tag for reproducibility.
 
 ```bash
-uvx --from git+https://github.com/tina4stack/claude-pascal-mcp pascal-mcp
+uvx --from git+https://github.com/tina4stack/pascal-mcp pascal-mcp
 ```
 
 `.mcp.json`:
@@ -81,9 +83,9 @@ uvx --from git+https://github.com/tina4stack/claude-pascal-mcp pascal-mcp
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/tina4stack/claude-pascal-mcp", "pascal-mcp"]
+      "args": ["--from", "git+https://github.com/tina4stack/pascal-mcp", "pascal-mcp"]
     }
   }
 }
@@ -92,8 +94,8 @@ uvx --from git+https://github.com/tina4stack/claude-pascal-mcp pascal-mcp
 ### C. Local dev clone (for contributors)
 
 ```bash
-git clone git@github.com:tina4stack/claude-pascal-mcp.git
-cd claude-pascal-mcp
+git clone git@github.com:tina4stack/pascal-mcp.git
+cd pascal-mcp
 uv sync
 
 # Run the MCP server (stdio mode)
@@ -108,9 +110,9 @@ uv run pascal-preview
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/claude-pascal-mcp", "pascal-mcp"]
+      "args": ["run", "--directory", "/path/to/pascal-mcp", "pascal-mcp"]
     }
   }
 }
@@ -121,9 +123,9 @@ uv run pascal-preview
 Pick the matching install form:
 
 ```bash
-claude mcp add --transport stdio pascal-dev -- uvx --from claude-pascal-mcp pascal-mcp
-claude mcp add --transport stdio pascal-dev -- uvx --from git+https://github.com/tina4stack/claude-pascal-mcp pascal-mcp
-claude mcp add --transport stdio pascal-dev -- uv run --directory /path/to/claude-pascal-mcp pascal-mcp
+claude mcp add --transport stdio pascal-mcp -- uvx --from claude-pascal-mcp pascal-mcp
+claude mcp add --transport stdio pascal-mcp -- uvx --from git+https://github.com/tina4stack/pascal-mcp pascal-mcp
+claude mcp add --transport stdio pascal-mcp -- uv run --directory /path/to/pascal-mcp pascal-mcp
 ```
 
 ### Register with Claude Desktop
@@ -140,7 +142,7 @@ Add to `.claude/launch.json` in the project you're working in:
   "configurations": [
     {
       "name": "pascal-preview",
-      "runtimeExecutable": "/path/to/claude-pascal-mcp/.venv/Scripts/pythonw.exe",
+      "runtimeExecutable": "/path/to/pascal-mcp/.venv/Scripts/pythonw.exe",
       "runtimeArgs": ["-m", "pascal_mcp.preview_bridge"],
       "port": 18080,
       "autoPort": true

@@ -312,6 +312,8 @@ This generates:
 
 Once a release is published to PyPI, no clone is needed:
 
+The PyPI distribution keeps its original `claude-pascal-mcp` name for compatibility. The server and repository use `pascal-mcp`.
+
 ```bash
 uvx --from claude-pascal-mcp pascal-mcp
 ```
@@ -319,16 +321,16 @@ uvx --from claude-pascal-mcp pascal-mcp
 ### Option 2 — Run straight from GitHub (no PyPI required)
 
 ```bash
-uvx --from git+https://github.com/tina4stack/claude-pascal-mcp pascal-mcp
+uvx --from git+https://github.com/tina4stack/pascal-mcp pascal-mcp
 ```
 
-Pin to a tag for reproducibility: `git+https://github.com/tina4stack/claude-pascal-mcp@v0.1.0`.
+Pin to a tag for reproducibility: `git+https://github.com/tina4stack/pascal-mcp@v0.1.0`.
 
 ### Option 3 — Local development clone
 
 ```bash
-git clone https://github.com/tina4stack/claude-pascal-mcp.git
-cd claude-pascal-mcp
+git clone https://github.com/tina4stack/pascal-mcp.git
+cd pascal-mcp
 
 # Install dependencies
 uv sync
@@ -345,19 +347,19 @@ uv run pascal-preview
 PyPI install:
 
 ```bash
-claude mcp add --transport stdio pascal-dev -- uvx --from claude-pascal-mcp pascal-mcp
+claude mcp add --transport stdio pascal-mcp -- uvx --from claude-pascal-mcp pascal-mcp
 ```
 
 Git install:
 
 ```bash
-claude mcp add --transport stdio pascal-dev -- uvx --from git+https://github.com/tina4stack/claude-pascal-mcp pascal-mcp
+claude mcp add --transport stdio pascal-mcp -- uvx --from git+https://github.com/tina4stack/pascal-mcp pascal-mcp
 ```
 
 Local clone:
 
 ```bash
-claude mcp add --transport stdio pascal-dev -- uv run --directory /path/to/claude-pascal-mcp pascal-mcp
+claude mcp add --transport stdio pascal-mcp -- uv run --directory /path/to/pascal-mcp pascal-mcp
 ```
 
 Or add to your project's `.mcp.json` — pick the form that matches how you installed:
@@ -365,7 +367,7 @@ Or add to your project's `.mcp.json` — pick the form that matches how you inst
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uvx",
       "args": ["--from", "claude-pascal-mcp", "pascal-mcp"]
     }
@@ -376,9 +378,9 @@ Or add to your project's `.mcp.json` — pick the form that matches how you inst
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/tina4stack/claude-pascal-mcp", "pascal-mcp"]
+      "args": ["--from", "git+https://github.com/tina4stack/pascal-mcp", "pascal-mcp"]
     }
   }
 }
@@ -387,9 +389,9 @@ Or add to your project's `.mcp.json` — pick the form that matches how you inst
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/claude-pascal-mcp", "pascal-mcp"]
+      "args": ["run", "--directory", "/path/to/pascal-mcp", "pascal-mcp"]
     }
   }
 }
@@ -402,7 +404,7 @@ Add to your `claude_desktop_config.json` (pick the form matching your install):
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uvx",
       "args": ["--from", "claude-pascal-mcp", "pascal-mcp"]
     }
@@ -413,9 +415,9 @@ Add to your `claude_desktop_config.json` (pick the form matching your install):
 ```json
 {
   "mcpServers": {
-    "pascal-dev": {
+    "pascal-mcp": {
       "command": "uv",
-      "args": ["run", "--directory", "C:/path/to/claude-pascal-mcp", "pascal-mcp"]
+      "args": ["run", "--directory", "C:/path/to/pascal-mcp", "pascal-mcp"]
     }
   }
 }
@@ -434,7 +436,7 @@ Maintainer notes — cutting a new release publishes to PyPI automatically.
 - Create the project on [pypi.org](https://pypi.org) (or reserve it via a first manual `uv publish`).
 - Under *Project → Publishing → Add a new publisher*, configure GitHub Actions:
   - Owner: `tina4stack`
-  - Repository: `claude-pascal-mcp`
+  - Repository: `pascal-mcp`
   - Workflow: `publish.yml`
   - Environment: `pypi`
 - In the GitHub repo, create an environment named `pypi` (Settings → Environments).
@@ -451,7 +453,7 @@ Add to `.claude/launch.json` in your project root:
   "configurations": [
     {
       "name": "pascal-preview",
-      "runtimeExecutable": "/path/to/claude-pascal-mcp/.venv/Scripts/pythonw.exe",
+      "runtimeExecutable": "/path/to/pascal-mcp/.venv/Scripts/pythonw.exe",
       "runtimeArgs": ["-m", "pascal_mcp.preview_bridge"],
       "port": 18080,
       "autoPort": true
