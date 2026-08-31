@@ -342,43 +342,33 @@ uv run pascal-mcp
 uv run pascal-preview
 ```
 
-### Register with Claude Code
+### Codex
 
-PyPI install:
+Add this to `~/.codex/config.toml` (Codex CLI and Codex desktop both read this configuration):
 
-```bash
-claude mcp add --transport stdio pascal-mcp -- uvx --from claude-pascal-mcp pascal-mcp
+```toml
+[mcp_servers.pascal-mcp]
+command = "uvx"
+args = ["--from", "git+https://github.com/tina4stack/pascal-mcp", "pascal-mcp"]
 ```
 
-Git install:
+Restart Codex, then ask it to use `get_compiler_info` to confirm the server is available. See the [Codex MCP documentation](https://developers.openai.com/codex/mcp) for configuration details.
+
+### Claude Code
+
+Register the server from a terminal:
 
 ```bash
 claude mcp add --transport stdio pascal-mcp -- uvx --from git+https://github.com/tina4stack/pascal-mcp pascal-mcp
 ```
 
-Local clone:
-
-```bash
-claude mcp add --transport stdio pascal-mcp -- uv run --directory /path/to/pascal-mcp pascal-mcp
-```
-
-Or add to your project's `.mcp.json` — pick the form that matches how you installed:
+For a project-scoped setup, add this to `.mcp.json` in the project root instead:
 
 ```json
 {
   "mcpServers": {
     "pascal-mcp": {
-      "command": "uvx",
-      "args": ["--from", "claude-pascal-mcp", "pascal-mcp"]
-    }
-  }
-}
-```
-
-```json
-{
-  "mcpServers": {
-    "pascal-mcp": {
+      "type": "stdio",
       "command": "uvx",
       "args": ["--from", "git+https://github.com/tina4stack/pascal-mcp", "pascal-mcp"]
     }
@@ -386,42 +376,34 @@ Or add to your project's `.mcp.json` — pick the form that matches how you inst
 }
 ```
 
-```json
-{
-  "mcpServers": {
-    "pascal-mcp": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/pascal-mcp", "pascal-mcp"]
-    }
-  }
-}
-```
+### Cursor
 
-### Register with Claude Desktop
-
-Add to your `claude_desktop_config.json` (pick the form matching your install):
+Create or update `.cursor/mcp.json` in your project (or `~/.cursor/mcp.json` for all projects):
 
 ```json
 {
   "mcpServers": {
     "pascal-mcp": {
+      "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "claude-pascal-mcp", "pascal-mcp"]
+      "args": ["--from", "git+https://github.com/tina4stack/pascal-mcp", "pascal-mcp"]
     }
   }
 }
 ```
 
-```json
-{
-  "mcpServers": {
-    "pascal-mcp": {
-      "command": "uv",
-      "args": ["run", "--directory", "C:/path/to/pascal-mcp", "pascal-mcp"]
-    }
-  }
-}
+Restart Cursor, then enable `pascal-mcp` from **Settings → Tools & MCP** if it is not enabled automatically.
+
+### Use a local clone instead
+
+For any client, replace the `uvx` command and arguments above with:
+
+```text
+command: uv
+args: ["run", "--directory", "/path/to/pascal-mcp", "pascal-mcp"]
 ```
+
+The published package is still named `claude-pascal-mcp` for compatibility. If you prefer PyPI to GitHub, replace the Git URL in the examples with `claude-pascal-mcp`.
 
 ## Releasing
 
