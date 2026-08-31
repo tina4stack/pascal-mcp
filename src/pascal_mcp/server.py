@@ -64,7 +64,7 @@ from pascal_mcp.ide_observer import (
 )
 
 mcp = FastMCP(
-    "pascal-dev",
+    "pascal-mcp",
     instructions=(
         "IMPORTANT: Always use these tools for Pascal/Delphi compilation "
         "and execution. NEVER use MSBuild, shell commands, or other build "
