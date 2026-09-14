@@ -1,4 +1,4 @@
-# Claude Pascal MCP Server
+# Pascal MCP Server
 
 An MCP (Model Context Protocol) server that lets Claude compile, run, and interact with Pascal/Delphi desktop applications. Supports Free Pascal (fpc), Delphi 32-bit (dcc32), and Delphi 64-bit (dcc64) compilers.
 
