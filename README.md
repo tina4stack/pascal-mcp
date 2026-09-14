@@ -1,6 +1,6 @@
 # Pascal MCP Server
 
-An MCP (Model Context Protocol) server that lets Claude compile, run, and interact with Pascal/Delphi desktop applications. Supports Free Pascal (fpc), Delphi 32-bit (dcc32), and Delphi 64-bit (dcc64) compilers.
+An MCP (Model Context Protocol) server that lets any supported AI harness compile, run, and interact with Pascal/Delphi desktop applications. Supports Free Pascal (fpc), Delphi 32-bit (dcc32), and Delphi 64-bit (dcc64) compilers.
 
 ## Features
 
@@ -14,7 +14,7 @@ An MCP (Model Context Protocol) server that lets Claude compile, run, and intera
 - **Windows App Interaction** — click, type text, and send keyboard shortcuts to desktop app windows
 - **Android Device Interaction** — full ADB support: screenshots, tap, swipe, type, key events, app management, file transfer
 - **IDE Observer** — capture RAD Studio/Delphi/Lazarus IDE screenshots and read compiler errors
-- **Preview Bridge** — live preview of running Pascal apps through Claude's preview system
+- **Preview Bridge** — live preview of running Pascal apps through any AI tools preview system
 - **FPC Installer** — download and install Free Pascal if no compiler is available
 
 ## Tools
